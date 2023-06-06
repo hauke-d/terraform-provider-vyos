@@ -2,6 +2,7 @@ package vyos
 
 import (
 	"context"
+	"reflect"
 	"regexp"
 	"time"
 
@@ -43,7 +44,7 @@ func resourceConfigBlock() *schema.Resource {
 				ValidateDiagFunc: validation.MapKeyMatch(regexp.MustCompile("^[^ ]+$"), "Config keys can not contain whitespace"),
 			},
 		},
-        Timeouts: &schema.ResourceTimeout{
+		Timeouts: &schema.ResourceTimeout{
 			Create:  schema.DefaultTimeout(10 * time.Minute),
 			Read:    schema.DefaultTimeout(10 * time.Minute),
 			Update:  schema.DefaultTimeout(10 * time.Minute),
@@ -60,11 +61,20 @@ func resourceConfigBlockCreate(ctx context.Context, d *schema.ResourceData, m in
 	client := *p.client
 	path := d.Get("path").(string)
 
-	// Check if config already exists
-	configs, err := client.Config.ShowTree(ctx, path)
+	anyConfigs, err := client.Config.Show(ctx, path)
 	if err != nil {
 		return diag.FromErr(err)
 	}
+
+	if anyConfigs == nil {
+		anyConfigs = map[string]any{}
+	}
+
+	configs, ok := anyConfigs.(map[string]any)
+	if !ok {
+		return diag.Errorf("Configuration block '%s' has unexpected type '%s'", path, reflect.TypeOf(anyConfigs))
+	}
+
 	// Dont care about sub config blocks
 	for attr, val := range configs {
 		switch val.(type) {
@@ -81,10 +91,10 @@ func resourceConfigBlockCreate(ctx context.Context, d *schema.ResourceData, m in
 
 	commands := map[string]interface{}{}
 	for attr, val := range configs {
-		commands[path+" "+attr] = val
+		commands[attr] = val
 	}
 
-	err = client.Config.SetTree(ctx, commands)
+	err = client.Config.Set(ctx, path, commands)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -101,9 +111,18 @@ func resourceConfigBlockRead(ctx context.Context, d *schema.ResourceData, m inte
 	c := *p.client
 	path := d.Id()
 
-	configs, err := c.Config.ShowTree(ctx, path)
+	anyConfigs, err := c.Config.Show(ctx, path)
 	if err != nil {
 		return diag.FromErr(err)
+	}
+
+	if anyConfigs == nil {
+		anyConfigs = map[string]any{}
+	}
+
+	configs, ok := anyConfigs.(map[string]any)
+	if !ok {
+		return diag.Errorf("Configuration block '%s' has unexpected type '%s'", path, reflect.TypeOf(anyConfigs))
 	}
 
 	// Remove child blocks of config
@@ -149,21 +168,21 @@ func resourceConfigBlockUpdate(ctx context.Context, d *schema.ResourceData, m in
 		value, ok := new_configs[old_attr]
 		_ = value
 		if !ok {
-			deleted_attrs = append(deleted_attrs, path+" "+old_attr)
+			deleted_attrs = append(deleted_attrs, old_attr)
 		}
 	}
 
-	errDel := c.Config.Delete(ctx, deleted_attrs...)
+	errDel := c.Config.Delete(ctx, path, deleted_attrs)
 	if errDel != nil {
 		return diag.FromErr(errDel)
 	}
 
 	commands := map[string]interface{}{}
 	for attr, val := range new_configs {
-		commands[path+" "+attr] = val
+		commands[attr] = val
 	}
 
-	errSet := c.Config.SetTree(ctx, commands)
+	errSet := c.Config.Set(ctx, path, commands)
 	if errSet != nil {
 		return diag.FromErr(errSet)
 	}

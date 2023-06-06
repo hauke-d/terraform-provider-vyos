@@ -2,6 +2,7 @@ package vyos
 
 import (
 	"context"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -36,7 +37,7 @@ func resourceConfig() *schema.Resource {
 				Required:    true,
 			},
 		},
-        Timeouts: &schema.ResourceTimeout{
+		Timeouts: &schema.ResourceTimeout{
 			Create:  schema.DefaultTimeout(10 * time.Minute),
 			Read:    schema.DefaultTimeout(10 * time.Minute),
 			Update:  schema.DefaultTimeout(10 * time.Minute),
@@ -54,13 +55,19 @@ func resourceConfigCreate(ctx context.Context, d *schema.ResourceData, m interfa
 	var diags diag.Diagnostics
 
 	// Check if config already exists
-	val, err := c.Config.Show(ctx, key)
+	anyVal, err := c.Config.Show(ctx, key)
 	if err != nil {
 		return diag.FromErr(err)
 	}
+
+	val, ok := anyVal.(string)
+	if !ok {
+		return diag.Errorf("Configuration '%s' has unexpected type '%s'", key, reflect.TypeOf(anyVal))
+	}
+
 	// Dont care about sub config blocks
-	if val != nil {
-		return diag.Errorf("Configuration '%s' already exists with value '%s' set, try a resource import instead.", key, *val)
+	if anyVal != nil {
+		return diag.Errorf("Configuration '%s' already exists with value '%s' set, try a resource import instead.", key, val)
 	}
 
 	err = c.Config.Set(ctx, key, value)

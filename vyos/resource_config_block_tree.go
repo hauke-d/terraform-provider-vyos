@@ -2,6 +2,7 @@ package vyos
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -40,10 +41,10 @@ func resourceConfigBlockTree() *schema.Resource {
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
-				Required:         true,
+				Required: true,
 			},
 		},
-        Timeouts: &schema.ResourceTimeout{
+		Timeouts: &schema.ResourceTimeout{
 			Create:  schema.DefaultTimeout(10 * time.Minute),
 			Read:    schema.DefaultTimeout(10 * time.Minute),
 			Update:  schema.DefaultTimeout(10 * time.Minute),
@@ -61,11 +62,20 @@ func resourceConfigBlockTreeCreate(ctx context.Context, d *schema.ResourceData, 
 	path := d.Get("path").(string)
 
 	// Check if config already exists
-	configs, err := client.Config.ShowTree(ctx, path)
+	anyConfigs, err := client.Config.Show(ctx, path)
 	if err != nil {
 		return diag.FromErr(err)
 	}
-	
+
+	if anyConfigs == nil {
+		anyConfigs = map[string]any{}
+	}
+
+	configs, ok := anyConfigs.(map[string]any)
+	if !ok {
+		return diag.Errorf("Configuration block '%s' has unexpected type '%s'", path, reflect.TypeOf(anyConfigs))
+	}
+
 	for attr, _ := range configs {
 		return diag.Errorf("Configuration block '%s' already exists and has '%s' set, try a resource import instead.", path, attr)
 	}
@@ -74,10 +84,10 @@ func resourceConfigBlockTreeCreate(ctx context.Context, d *schema.ResourceData, 
 
 	commands := map[string]interface{}{}
 	for attr, val := range configs {
-		commands[path+" "+attr] = val
+		commands[attr] = val
 	}
 
-	err = client.Config.SetTree(ctx, commands)
+	err = client.Config.Set(ctx, path, commands)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -94,9 +104,18 @@ func resourceConfigBlockTreeRead(ctx context.Context, d *schema.ResourceData, m 
 	c := *p.client
 	path := d.Id()
 
-	configsTree, err := c.Config.ShowTree(ctx, path)
+	anyConfigs, err := c.Config.Show(ctx, path)
 	if err != nil {
 		return diag.FromErr(err)
+	}
+
+	if anyConfigs == nil {
+		anyConfigs = map[string]any{}
+	}
+
+	configsTree, ok := anyConfigs.(map[string]any)
+	if !ok {
+		return diag.Errorf("Configuration block '%s' has unexpected type '%s'", path, reflect.TypeOf(anyConfigs))
 	}
 
 	flat, err := client.Flatten(configsTree)
@@ -110,7 +129,6 @@ func resourceConfigBlockTreeRead(ctx context.Context, d *schema.ResourceData, m 
 		value := path_value[1]
 		configs[path] = value
 	}
-	
 
 	// Easiest way to allow ImportStatePassthroughContext to work is to set the path
 	if d.Get("path") == "" {
@@ -143,21 +161,21 @@ func resourceConfigBlockTreeUpdate(ctx context.Context, d *schema.ResourceData, 
 		value, ok := new_configs[old_attr]
 		_ = value
 		if !ok {
-			deleted_attrs = append(deleted_attrs, path+" "+old_attr)
+			deleted_attrs = append(deleted_attrs, old_attr)
 		}
 	}
 
-	errDel := c.Config.Delete(ctx, deleted_attrs...)
+	errDel := c.Config.Delete(ctx, path, deleted_attrs)
 	if errDel != nil {
 		return diag.FromErr(errDel)
 	}
 
 	commands := map[string]interface{}{}
 	for attr, val := range new_configs {
-		commands[path+" "+attr] = val
+		commands[attr] = val
 	}
 
-	errSet := c.Config.SetTree(ctx, commands)
+	errSet := c.Config.Set(ctx, path, commands)
 	if errSet != nil {
 		return diag.FromErr(errSet)
 	}

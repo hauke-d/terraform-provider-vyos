@@ -22,7 +22,7 @@ func dataSourceConfig() *schema.Resource {
 				Computed: true,
 			},
 		},
-        Timeouts: &schema.ResourceTimeout{
+		Timeouts: &schema.ResourceTimeout{
 			Read:    schema.DefaultTimeout(10 * time.Minute),
 			Default: schema.DefaultTimeout(10 * time.Minute),
 		},
@@ -34,9 +34,15 @@ func dataSourceConfigRead(ctx context.Context, d *schema.ResourceData, m interfa
 	c := *p.client
 	key := d.Get("key").(string)
 
-	value, err := c.Config.Show(ctx, key)
+	// Check if config already exists
+	anyVal, err := c.Config.Show(ctx, key)
 	if err != nil {
 		return diag.FromErr(err)
+	}
+
+	value, ok := anyVal.(*string)
+	if !ok {
+		return diag.Errorf("Configuration '%s' has unexpected type", key)
 	}
 
 	if value != nil {
